@@ -2,8 +2,8 @@
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
-API_ID = 123456  # عدد واقعی
-API_HASH = "your_api_hash"
+API_ID = 33821478  # عدد واقعی
+API_HASH = "9d81f8416d735de816b1ededcd51f9b8"
 
 phones = [
     "+989127555787"
