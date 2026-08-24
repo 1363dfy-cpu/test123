@@ -15,11 +15,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TGViewer")
 
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
+API_ID = int(os.environ["33821478"])
+API_HASH = os.environ["9d81f8416d735de816b1ededcd51f9b8"]
 
 # کانال‌ها با ویرگول جدا شدن
-CHANNELS = [c.strip() for c in os.environ["CHANNELS"].split(",") if c.strip()]
+CHANNELS = [c.strip() for c in os.environ["https://t.me/Hesehkhoob1"].split(",") if c.strip()]
 
 # Gist persistence
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
