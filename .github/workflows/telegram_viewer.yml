@@ -1,0 +1,56 @@
+name: Telegram Channel Viewer
+
+on:
+  schedule:
+    # هر ۱ ساعت یکبار (دقیقه ۰)
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  view-channels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install telethon requests --break-system-packages
+
+      - name: Run viewer
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          CHANNELS: ${{ secrets.CHANNELS }}
+
+          SESSION_1: ${{ secrets.SESSION_1 }}
+          PHONE_1: ${{ secrets.PHONE_1 }}
+          SESSION_2: ${{ secrets.SESSION_2 }}
+          PHONE_2: ${{ secrets.PHONE_2 }}
+          SESSION_3: ${{ secrets.SESSION_3 }}
+          PHONE_3: ${{ secrets.PHONE_3 }}
+          SESSION_4: ${{ secrets.SESSION_4 }}
+          PHONE_4: ${{ secrets.PHONE_4 }}
+          SESSION_5: ${{ secrets.SESSION_5 }}
+          PHONE_5: ${{ secrets.PHONE_5 }}
+          SESSION_6: ${{ secrets.SESSION_6 }}
+          PHONE_6: ${{ secrets.PHONE_6 }}
+          SESSION_7: ${{ secrets.SESSION_7 }}
+          PHONE_7: ${{ secrets.PHONE_7 }}
+          SESSION_8: ${{ secrets.SESSION_8 }}
+          PHONE_8: ${{ secrets.PHONE_8 }}
+          SESSION_9: ${{ secrets.SESSION_9 }}
+          PHONE_9: ${{ secrets.PHONE_9 }}
+          SESSION_10: ${{ secrets.SESSION_10 }}
+          PHONE_10: ${{ secrets.PHONE_10 }}
+
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+
+        run: python telegram_viewer.py
