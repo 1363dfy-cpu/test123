@@ -2,31 +2,33 @@ name: Telegram Channel Viewer
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # هر ۱ ساعت یکبار (دقیقه ۰)
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
   view-channels:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # ۱۰ اکانت × ۱۰ کانال حدود ۵-۱۰ دقیقه
-    
+    timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
-        run: pip install telethon asyncio requests
-      
+        run: |
+          pip install telethon requests --break-system-packages
+
       - name: Run viewer
         env:
-          API_ID: ${{ 33821478 }}
-          API_HASH: ${{ 9d81f8416d735de816b1ededcd51f9b8 }}
-          CHANNELS: ${{ https://t.me/Hesehkhoob1 }}
-          
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          CHANNELS: ${{ secrets.CHANNELS }}
+
           SESSION_1: ${{ secrets.SESSION_1 }}
           PHONE_1: ${{ secrets.PHONE_1 }}
           SESSION_2: ${{ secrets.SESSION_2 }}
@@ -47,8 +49,8 @@ jobs:
           PHONE_9: ${{ secrets.PHONE_9 }}
           SESSION_10: ${{ secrets.SESSION_10 }}
           PHONE_10: ${{ secrets.PHONE_10 }}
-          
+
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: ${{ secrets.GIST_ID }}
-          
+
         run: python telegram_viewer.py
