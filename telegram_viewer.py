@@ -2,11 +2,14 @@ import os
 import json
 import asyncio
 import logging
+import random
 import requests
 from datetime import datetime
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
+from telethon.tl.functions.messages import GetMessagesViewsRequest
+from telethon.tl.types import InputMessagePdu
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,17 +18,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger("TGViewer")
 
-API_ID = int(os.environ["33821478"])
-API_HASH = os.environ["9d81f8416d735de816b1ededcd51f9b8"]
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+CHANNELS = [c.strip() for c in os.environ["CHANNELS"].split(",") if c.strip()]
 
-# کانال‌ها با ویرگول جدا شدن
-CHANNELS = [c.strip() for c in os.environ["https://t.me/Hesehkhoob1"].split(",") if c.strip()]
-
-# Gist persistence
 GIST_TOKEN = os.environ.get("GIST_TOKEN")
 GIST_ID = os.environ.get("GIST_ID")
 
-# بارگذاری ۱۰ اکانت
+# ========== Device Info تصادفی ==========
+DEVICES = [
+    "Samsung Galaxy S24", "Samsung Galaxy S23", "Samsung Galaxy S22",
+    "Xiaomi 14", "Xiaomi 13 Pro", "Xiaomi Redmi Note 13",
+    "iPhone 15 Pro Max", "iPhone 14 Pro", "iPhone 13",
+    "OnePlus 12", "OnePlus 11", "OPPO Find X7",
+    "Google Pixel 8 Pro", "Google Pixel 7", "Huawei P60 Pro",
+    "POCO X6", "Realme GT 5", "Vivo X100",
+]
+
+SYSTEM_VERSIONS = [
+    "Android 14", "Android 13", "Android 12",
+    "iOS 17.4", "iOS 17.3", "iOS 17.2",
+    "Android 14.0.1", "Android 13.0", "Android 12.0",
+]
+
+APP_VERSIONS = [
+    "9.6.0", "9.5.0", "9.4.0", "9.3.0",
+    "10.0.0", "10.1.0", "10.2.0",
+    "8.9.0", "8.8.0", "9.0.0", "9.1.0",
+]
+
+LANG_CODES = ["en", "fa", "ar", "tr", "de", "fr", "es", "ru", "zh"]
+# ========================================
+
+
 ALL_ACCOUNTS = []
 for i in range(1, 11):
     session = os.environ.get(f"SESSION_{i}")
@@ -38,197 +63,205 @@ for i in range(1, 11):
             "label": phone[-4:]
         })
 
-logger.info(f"📱 تعداد اکانت‌های بارگذاری شده: {len(ALL_ACCOUNTS)}")
-if len(ALL_ACCOUNTS) < 10:
-    logger.warning(f"⚠️ فقط {len(ALL_ACCOUNTS)} اکانت از ۱۰ تنظیم شده")
+logger.info(f"📱 {len(ALL_ACCOUNTS)} اکانت بارگذاری شد")
 
 
 def load_sessions_from_gist():
-    """بارگذاری سشن‌های به‌روز از Gist"""
     if not GIST_TOKEN or not GIST_ID:
-        logger.info("ℹ️ Gist persistence غیرفعال است (GIST_TOKEN یا GIST_ID تنظیم نشده)")
         return
-
     try:
         headers = {"Authorization": f"token {GIST_TOKEN}"}
-        resp = requests.get(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers=headers,
-            timeout=15
-        )
+        resp = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=15)
         if resp.status_code != 200:
-            logger.warning(f"Gist load failed: HTTP {resp.status_code}")
             return
-
         files = resp.json().get("files", {})
         if "sessions.json" not in files:
-            logger.info("ℹ️ فایل sessions.json در Gist وجود ندارد")
             return
-
         saved = json.loads(files["sessions.json"]["content"])
-        loaded_count = 0
-        
+        count = 0
         for acc in ALL_ACCOUNTS:
-            phone = acc["phone"]
-            if phone in saved and len(saved[phone]) > 50:
-                acc["session"] = saved[phone]
-                loaded_count += 1
-        
-        logger.info(f"✅ {loaded_count} سشن از Gist بارگذاری شد")
-        
-    except requests.exceptions.RequestException as e:
-        logger.warning(f"⚠️ خطا در اتصال به Gist: {e}")
-    except json.JSONDecodeError:
-        logger.warning("⚠️ فرمت sessions.json در Gist نامعتبر است")
-    except Exception as e:
-        logger.warning(f"⚠️ خطای غیرمنتظره در Gist: {e}")
+            if acc["phone"] in saved and len(saved[acc["phone"]]) > 50:
+                acc["session"] = saved[acc["phone"]]
+                count += 1
+        logger.info(f"✅ {count} سشن از Gist بارگذاری شد")
+    except:
+        pass
 
 
 def save_sessions_to_gist(accounts):
-    """ذخیره سشن‌های به‌روز در Gist"""
     if not GIST_TOKEN or not GIST_ID:
         return
-
     try:
         data = {acc["phone"]: acc["session"] for acc in accounts}
         headers = {"Authorization": f"token {GIST_TOKEN}"}
-        
-        payload = {
-            "files": {
-                "sessions.json": {
-                    "content": json.dumps(data, indent=2, ensure_ascii=False)
-                }
-            }
-        }
-        
         resp = requests.patch(
             f"https://api.github.com/gists/{GIST_ID}",
             headers=headers,
-            json=payload,
+            json={"files": {"sessions.json": {"content": json.dumps(data, indent=2)}}},
             timeout=15
         )
-        
         if resp.status_code == 200:
             logger.info(f"✅ {len(data)} سشن در Gist ذخیره شد")
-        else:
-            logger.warning(f"⚠️ ذخیره در Gist ناموفق: HTTP {resp.status_code}")
-            
-    except Exception as e:
-        logger.warning(f"⚠️ خطا در ذخیره Gist: {e}")
+    except:
+        pass
 
 
-async def mark_account_channels(client, phone_label):
-    """یک اکانت تمام کانال‌ها رو سین می‌کنه"""
-    success_count = 0
-    fail_count = 0
-    
-    for idx, channel in enumerate(CHANNELS):
+def random_sleep(min_sec=8, max_sec=20):
+    duration = random.uniform(min_sec, max_sec)
+    logger.debug(f"⏳ sleep {duration:.1f}s")
+    return asyncio.sleep(duration)
+
+
+async def mark_channel_messages(client, phone_label, channel):
+    """سین کردن کانال و کلیک روی آخرین پست"""
+    try:
+        entity = await client.get_entity(channel)
+        
+        # ========== دریافت آخرین پیام‌ها ==========
+        limit = random.randint(30, 150)
+        msgs = await client.get_messages(entity, limit=limit)
+        
+        if not msgs:
+            logger.info(f"  [{phone_label}] - {channel[:35]}... → هیچ پیامی نیست")
+            return True
+        
+        last_msg = msgs[0]
+        last_id = last_msg.id
+        
+        # ========== ۱. سین کردن (مارک به عنوان خوانده شده) ==========
+        await client.send_read_acknowledge(entity, max_id=last_id)
+        logger.info(f"  [{phone_label}] ✓ {channel[:35]}... → {len(msgs)} msg synced (to {last_id})")
+        
+        # ========== ۲. کلیک کردن روی آخرین پست (افزایش ویو) ==========
         try:
-            entity = await client.get_entity(channel)
-            messages = await client.get_messages(entity, limit=100)
+            # تأخیر تصادفی ۳ تا ۱۰ ثانیه قبل از کلیک (شبیه انسان)
+            await random_sleep(3, 10)
             
-            if messages:
-                max_id = messages[0].id
-                await client.send_read_acknowledge(entity, max_id=max_id)
-                success_count += 1
-                logger.info(f"  [{phone_label}] ✓ {channel[:40]}... → {len(messages)} msg (to {max_id})")
-            else:
-                logger.info(f"  [{phone_label}] - {channel[:40]}... → پیامی ندارد")
-                success_count += 1
+            # روش ۱: افزایش ویو کانت با GetMessagesViewsRequest
+            views_result = await client(GetMessagesViewsRequest(
+                peer=entity,
+                id=[last_id],
+                increment=True
+            ))
+            
+            # views_result لیستی از views_count برگردونده
+            if views_result and len(views_result.views) > 0:
+                new_views = views_result.views[0].views
+                logger.info(f"  [{phone_label}] 👁️ کلیک روی پست {last_id} → ویو: {new_views}")
+            
+            # روش ۲: ارسال یک سیگنال "دیدم" اضافی (اختیاری)
+            # این خط رو uncomment کنید اگه روش بالا کافی نیست:
+            # await client.send_read_acknowledge(entity, max_id=last_id)
+            
+            # روش ۳: شبیه‌سازی باز کردن رسانه (اگه پست عکس/ویدیو داشت)
+            if last_msg.media:
+                # دانلود نمیکنیم، فقط درخواست اطلاعات رسانه میدیم = یه جورایی کلیک محسوب میشه
+                try:
+                    await client.get_messages(entity, ids=last_id)
+                    logger.info(f"  [{phone_label}] 🖼️ رسانه پست {last_id} بازدید شد")
+                except:
+                    pass
             
         except FloodWaitError as e:
-            wait = e.seconds
-            logger.warning(f"  [{phone_label}] ⏳ {channel[:30]}... rate limit → {wait}s sleep")
-            await asyncio.sleep(min(wait, 60))
-            fail_count += 1
-            
-        except ValueError as e:
-            if "Cannot find any entity" in str(e):
-                logger.warning(f"  [{phone_label}] ❌ {channel} → دسترسی ندارد (اکانت جوین نیست)")
-                fail_count += 1
-            else:
-                logger.error(f"  [{phone_label}] ❌ {channel} → {e}")
-                fail_count += 1
-                
+            logger.warning(f"  [{phone_label}] ⏳ FloodWait در کلیک: {e.seconds}s")
+            await asyncio.sleep(min(e.seconds, 60))
         except Exception as e:
-            logger.error(f"  [{phone_label}] ❌ {channel[:30]}... → {str(e)[:80]}")
-            fail_count += 1
+            # بعضی کانال‌ها ممکنه اجازه ندن - نادیده میگیریم
+            logger.debug(f"  [{phone_label}] ℹ️ کلیک ممکن نبود: {str(e)[:50]}")
         
-        # تأخیر ۲-۵ ثانیه بین کانال‌ها (تصادفی برای طبیعی‌تر شدن)
-        await asyncio.sleep(2 + (idx % 3))
-    
-    return success_count, fail_count
+        return True
+        
+    except ValueError as e:
+        if "Cannot find any entity" in str(e):
+            logger.warning(f"  [{phone_label}] ❌ {channel[:30]} → دسترسی ندارد (جوین نیستید)")
+        else:
+            logger.error(f"  [{phone_label}] ❌ {channel[:30]} → {str(e)[:60]}")
+        return False
+    except FloodWaitError as e:
+        logger.warning(f"  [{phone_label}] ⏳ FloodWait: {e.seconds}s")
+        await asyncio.sleep(min(e.seconds, 120))
+        return False
+    except Exception as e:
+        logger.error(f"  [{phone_label}] ❌ {channel[:30]} → {str(e)[:60]}")
+        return False
 
 
-async def run_single_account(acc):
-    """اجرای یک اکانت"""
+async def run_account(acc):
     try:
+        phone = acc["phone"]
+        label = acc["label"]
+        
+        device = random.choice(DEVICES)
+        system = random.choice(SYSTEM_VERSIONS)
+        app = random.choice(APP_VERSIONS)
+        lang = random.choice(LANG_CODES)
+        
+        logger.info(f"[{label}] 📱 {device} | {system} | v{app}")
+        
         client = TelegramClient(
             StringSession(acc["session"]),
             API_ID,
-            API_HASH
+            API_HASH,
+            device_model=device,
+            system_version=system,
+            app_version=app,
+            lang_code=lang
         )
         
         await client.start()
         me = await client.get_me()
-        logger.info(f"[{acc['label']}] ✅ {me.first_name or me.username or 'Unknown'}")
+        logger.info(f"[{label}] ✅ {me.first_name} (@{me.username or 'no username'})")
         
-        success, fail = await mark_account_channels(client, acc["label"])
+        await random_sleep(5, 15)
         
-        # ذخیره سشن به‌روز شده
+        for idx, channel in enumerate(CHANNELS):
+            if idx > 0:
+                await random_sleep(8, 25)
+            
+            await mark_channel_messages(client, label, channel)
+        
         acc["session"] = client.session.save()
-        
         await client.disconnect()
         
-        logger.info(f"[{acc['label']}] 🏁 تمام شد: {success}✅ / {fail}❌")
+        logger.info(f"[{label}] 🏁 تمام شد ✅")
         return True
         
     except Exception as e:
         error_msg = str(e)[:100]
-        logger.error(f"[{acc['label']}] ❌ خطا: {error_msg}")
-        
-        # اگر خطای اعتبارسنجی بود سشن رو پاک می‌کنیم
-        if "AUTH_KEY_UNREGISTERED" in error_msg or "SESSION_EXPIRED" in error_msg:
-            logger.warning(f"[{acc['label']}] ⚠️ سشن منقضی شده - نیاز به لاگین مجدد")
-        
+        logger.error(f"[{label}] ❌ خطا: {error_msg}")
         return False
 
 
 async def main():
-    logger.info("=" * 50)
-    logger.info(f"🚀 شروع اجرا - {len(ALL_ACCOUNTS)} اکانت × {len(CHANNELS)} کانال")
+    logger.info("=" * 55)
+    logger.info(f"🚀 شروع - {len(ALL_ACCOUNTS)} اکانت × {len(CHANNELS)} کانال")
     logger.info(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 50)
-    
-    # بارگذاری سشن‌های ذخیره شده
+    logger.info("=" * 55)
+
     load_sessions_from_gist()
-    
-    total_success = 0
-    total_fail = 0
-    
-    # اجرای ترتیبی اکانت‌ها (نه همزمان) برای کاهش ریسک بلاک
-    for idx, acc in enumerate(ALL_ACCOUNTS):
-        logger.info(f"\n--- اکانت {idx+1}/{len(ALL_ACCOUNTS)} [{acc['label']}] ---")
+
+    shuffled = ALL_ACCOUNTS.copy()
+    random.shuffle(shuffled)
+    logger.info(f"🔀 ترتیب: {' - '.join([a['label'] for a in shuffled])}")
+
+    success = 0
+    for idx, acc in enumerate(shuffled):
+        logger.info(f"\n--- {idx+1}/{len(shuffled)} [{acc['label']}] ---")
         
-        result = await run_single_account(acc)
+        if await run_account(acc):
+            success += 1
         
-        if result:
-            total_success += 1
-        else:
-            total_fail += 1
-        
-        # تأخیر ۵ ثانیه بین اکانت‌ها
-        if idx < len(ALL_ACCOUNTS) - 1:
-            logger.info(f"⏳ ۵ ثانیه صبر تا اکانت بعدی...")
-            await asyncio.sleep(5)
-    
-    # ذخیره سشن‌ها در Gist
+        if idx < len(shuffled) - 1:
+            delay = random.randint(20, 60)
+            logger.info(f"⏳ {delay} ثانیه تا بعدی...")
+            await asyncio.sleep(delay)
+
     save_sessions_to_gist(ALL_ACCOUNTS)
     
-    logger.info("=" * 50)
-    logger.info(f"🏁 پایان اجرا: {total_success} ✅ / {total_fail} ❌")
+    logger.info("\n" + "=" * 55)
+    logger.info(f"🏁 {success}/{len(ALL_ACCOUNTS)} موفق")
     logger.info(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 50)
+    logger.info("=" * 55)
 
 
 if __name__ == "__main__":
