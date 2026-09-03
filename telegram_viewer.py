@@ -26,7 +26,15 @@ from telethon.tl.functions.messages import (
     GetMessagesViewsRequest,
     SendReactionRequest,
 )
-from telethon.tl.functions.channels import LeaveChannelRequest, ImportChatInviteRequest
+from telethon.tl.functions.channels import LeaveChannelRequest
+# ← ImportChatInviteRequest ممکن است در نسخهٔ Telethon موجود نباشد
+try:
+    from telethon.tl.functions.channels import ImportChatInviteRequest
+except ImportError:
+    ImportChatInviteRequest = None
+    logging.warning("ImportChatInviteRequest در نسخهٔ Telethon موجود نیست. "
+                    "عملیات join/leave غیرفعال خواهد شد.")
+
 from telethon.tl.types import ReactionEmoji
 
 # ---------- Env ----------
@@ -297,7 +305,7 @@ async def process_channel(client, label, channel, op_cnt):
             await rand_delay_short()
 
             # 4. Join/Leave Ads
-            if msg.text:
+            if msg.text and ImportChatInviteRequest:
                 ad_links = extract_ad_links(msg.text)
                 all_links = list(set(ad_links))
                 if all_links and random.random() < 0.3:
