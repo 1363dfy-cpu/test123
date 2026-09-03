@@ -265,13 +265,30 @@ async def process_channel(client, phone_label, channel):
 async def run_account(acc):
     try:
         phone = acc["phone"]
-        label = acc["label"]
-        
-        device = random.choice(DEVICES)
-        system = random.choice(SYSTEM_VERSIONS)
-        app = random.choice(APP_VERSIONS)
-        lang = random.choice(LANG_CODES)
-        
+        label = acc["label"]        # مشخصات ثابت برای هر اکانت
+        ACCOUNT_PROFILES = {
+            1: {"device": "Samsung Galaxy S24", "system": "Android 14", "app": "10.3.0", "lang": "en"},
+            2: {"device": "Samsung Galaxy S23", "system": "Android 14", "app": "10.2.0", "lang": "en"},
+            3: {"device": "Xiaomi 14", "system": "Android 14", "app": "10.1.0", "lang": "fa"},
+            4: {"device": "iPhone 15 Pro Max", "system": "iOS 17.4", "app": "10.3.0", "lang": "en"},
+            5: {"device": "Google Pixel 8 Pro", "system": "Android 14", "app": "10.2.0", "lang": "en"},
+            6: {"device": "OnePlus 12", "system": "Android 14", "app": "10.1.0", "lang": "en"},
+            7: {"device": "Xiaomi 13 Pro", "system": "Android 13", "app": "10.0.0", "lang": "fa"},
+            8: {"device": "iPhone 14 Pro", "system": "iOS 17.3", "app": "9.6.0", "lang": "en"},
+            9: {"device": "Huawei P60 Pro", "system": "Android 13", "app": "9.5.0", "lang": "en"},
+            10: {"device": "Nothing Phone 2", "system": "Android 14", "app": "9.4.0", "lang": "en"},
+        }
+
+        profile = ACCOUNT_PROFILES.get(
+            acc["index"],
+            {"device": "Samsung Galaxy S24", "system": "Android 14", "app": "10.3.0", "lang": "en"}
+        )
+
+        device = profile["device"]
+        system = profile["system"]
+        app = profile["app"]
+        lang = profile["lang"]
+
         logger.info(f"[{label}] 📱 {device} | {system} | v{app}")
         
         client = TelegramClient(
