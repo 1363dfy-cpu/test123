@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# ====================  Imports  ====================
-import os
-import json
-import asyncio
-import logging
-import random
-import requests
-import re
+import os, json, random, asyncio, logging, requests, re, math, time
 from datetime import datetime, timedelta
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -16,411 +9,411 @@ from telethon.errors import FloodWaitError, AuthKeyDuplicatedError
 from telethon.tl.functions.messages import (
     GetMessagesViewsRequest,
     SendReactionRequest,
-    ImportChatInviteRequest,
-    LeaveChatRequest          # ← اضافه شده
 )
-from telethon.tl.types import ReactionEmoji, MessageEntityTextUrl, MessageEntityUrl
+from telethon.tl.functions.channels import LeaveChannelRequest, ImportChatInviteRequest
+from telethon.tl.types import ReactionEmoji
 
-# ====================  Logging  ====================
+# ================== Logging ==================
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()],
 )
-logger = logging.getLogger("TGViewerPRO")
+log = logging.getLogger("TGViewer_Pro")
 
-# ==================== Anti‑Ban Configuration ====================
-MAX_OPERATIONS_PER_RUN = 50      # حداکثر عملیات در هر اجرا
-MIN_DELAY_BETWEEN_CHANNELS = 15
-MAX_DELAY_BETWEEN_CHANNELS = 45
-MIN_DELAY_BETWEEN_ACTIONS = 3
-MAX_DELAY_BETWEEN_ACTIONS = 12
+# ================== Constants ==================
+MAX_OPERATIONS_PER_RUN = 25          
+MIN_DELAY_BETWEEN_CHANNELS = 20
+MAX_DELAY_BETWEEN_CHANNELS = 120     
 
-# لیست پروکسی‌های تصادفی (می‌توانید پروکسی واقعی اضافه کنید)
-PROXIES = [
-    None,  # بدون پروکسی برای برخی اکانت‌ها
-]
+# تنظیمات Join/Leave Ads
+JOIN_LEAVE_MIN_DELAY = 15            
+JOIN_LEAVE_MAX_DELAY = 60            
+JOIN_CLICK_DELAY = 2                 
 
-# Device Info متغیر (هر بار تغییر می‌کنه)
+REACTIONS = ["👍", "❤️", "🔥", "🎉", "🤔"] 
+REACTION_PROBABILITY = 0.6
+
 DEVICE_MODELS = [
-    "Samsung Galaxy S24 Ultra", "Samsung Galaxy S23 FE", "Samsung Galaxy A54",
-    "Xiaomi 14 Pro", "Xiaomi 13T Pro", "Xiaomi Redmi Note 12 Pro+",
-    "iPhone 15 Pro Max", "iPhone 14 Plus", "iPhone SE (3rd gen)",
-    "OnePlus 12R", "OnePlus Open", "OPPO Find N3 Flip",
-    "Google Pixel 8 Pro", "Google Pixel 7a", "Huawei Mate 60 Pro",
-    "POCO F5 Pro", "Realme GT 5 Pro", "Vivo X100 Pro",
-    "Nothing Phone 2a", "Asus Zenfone 10", "Sony Xperia 1 V",
+    "Samsung Galaxy S24 Ultra",
+    "iPhone 15 Pro Max",
+    "OnePlus 12R",
+    "Xiaomi 14 Pro",
+    "Google Pixel 8 Pro",
 ]
-SYSTEM_VERSIONS = [
-    "Android 14.0.1", "Android 14", "Android 13.0",
-    "iOS 17.4.1", "iOS 17.3.1", "iOS 17.2.1",
-    "Android 13.1", "Android 12.0", "HarmonyOS 4.0",
-]
-APP_VERSIONS = [
-    "10.4.0", "10.3.1", "10.2.1",
-    "10.0.1", "9.7.0", "9.6.1",
-    "11.0.0", "10.5.0", "9.8.0"
+SYSTEM_VERSIONS = ["Android 14", "iOS 17.4.1", "Android 13"]
+APP_VERSIONS = ["10.5.x", "10.4.2"]
+
+# ================== Env Variables ==================
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+CHANNELS_RAW = os.getenv("CHANNELS", "")
+CHANNELS = [c.strip() for c in CHANNELS_RAW.split(",") if c.strip()]
+
+GIST_TOKEN = os.getenv("GIST_TOKEN")
+GIST_ID = os.getenv("GIST_ID")
+
+# ================== Proxy Configuration (Auto-Discovery) ==================
+# URL برای دریافت لیست پروکسی‌ها (می‌توانید تغییر دهید)
+PROXY_API_URLS = [
+    "https://proxy-list.org/english/api.php?demon=t", # رایگان
+    "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5", # نمونه دیگر
 ]
 
-# ==================== Reactions ====================
-REACTIONS = ["👍", "❤️", "🔥", "😍", "😂", "😮", "😢", "👎", "🎉"]
-REACTION_PROBABILITY = 0.95
+# لیست اولیه پروکسی‌ها (اگر API کار نکرد)
+INITIAL_PROXIES = [
+    "socks5://user:pass@1.2.3.4:1080",
+]
 
-# ==================== Environment Variables ====================
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-CHANNELS = [c.strip() for c in os.environ["CHANNELS"].split(",") if c.strip()]
-GIST_TOKEN = os.environ.get("GIST_TOKEN")
-GIST_ID = os.environ.get("GIST_ID")
-
-# ==================== Account List ====================
-ALL_ACCOUNTS = []
-for i in range(1, 11):
-    session = os.environ.get(f"SESSION_{i}")
-    phone = os.environ.get(f"PHONE_{i}")
-    proxy = os.environ.get(f"PROXY_{i}")  # فرمت: socks5://user:pass@host:port یا خالی
-    if session and phone:
-        proxy_config = None
-        if proxy:
-            try:
-                parts = proxy.replace("socks5://", "").split("@")
-                if len(parts) == 2:
-                    auth, hostport = parts
-                    user, passw = auth.split(":")
-                    host, port = hostport.split(":")
-                    proxy_config = ("socks5", host, int(port), user, passw)
+class ProxyManager:
+    def __init__(self):
+        self.proxies = [] # لیست نهایی و تست شده
+        self.active_proxy = None
+        self.lock = asyncio.Lock()
+        
+    async def fetch_proxies(self, url):
+        """دریافت پروکسی از یک URL"""
+        try:
+            log.info(f"🌐 Fetching proxies from {url}...")
+            # برخی API ها نیاز به User-Agent دارند
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                content = response.text.strip()
+                # برخی API ها فرمت خط به خط دارند، برخی JSON
+                if "json" in url or "{" in content:
+                    try:
+                        data = json.loads(content)
+                        # فرض بر این است که آرایه‌ای از پروکسی‌هاست
+                        proxies_found = [p for p in data if isinstance(p, str)]
+                    except:
+                        proxies_found = []
                 else:
-                    host, port = parts[0].split(":")
-                    proxy_config = ("socks5", host, int(port))
-            except:
-                pass
+                    # فرمت متنی ساده (هر خط یک پروکسی)
+                    proxies_found = content.split('\n')
+                
+                log.info(f"✅ Found {len(proxies_found)} raw proxies from API.")
+                return proxies_found
+            return []
+        except Exception as e:
+            log.warning(f"❌ Error fetching from {url}: {e}")
+            return []
 
-        ALL_ACCOUNTS.append({
-            "index": i,
-            "phone": phone,
-            "session": session,
-            "proxy": proxy_config or random.choice(PROXIES),
-            "label": phone[-4:]
-        })
+    async def test_proxy(self, proxy_str):
+        """تست سرعت و دسترسی‌پذیری یک پروکسی"""
+        try:
+            # تبدیل به فرمت Telethon برای تست
+            parsed = self.parse(proxy_str)
+            if not parsed: return False
+            
+            # تست با درخواست به API خارجی (مثلاً httpbin یا ipify)
+            # توجه: این تست باید سریع باشد
+            url = "https://api.ipify.org?format=json"
+            
+            # استفاده از requests معمولی برای تست سریع
+            session = requests.Session()
+            proxy_dict = {
+                "socks5": f"{proxy_str.replace('socks5://', '')}",
+                "http": f"{proxy_str.replace('socks5://', '')}"
+            }
+            
+            # شروع تایمر
+            start_time = time.time()
+            
+            # انجام یک درخواست کوچک
+            resp = await asyncio.to_thread(session.get, url, proxies={"http": proxy_dict["http"]}, timeout=5)
+            
+            elapsed = time.time() - start_time
+            
+            if resp.status_code == 200 and elapsed < 3.0: # اگر زیر 3 ثانیه بود قبول است
+                log.debug(f"🟢 Proxy {proxy_str[:20]}... is FAST ({elapsed:.2f}s)")
+                return True
+            else:
+                log.debug(f"🟡 Proxy {proxy_str[:20]}... is SLOW ({elapsed:.2f}s)")
+                return True # هنوز هم قابل استفاده است ولی کندتر
+                
+        except Exception as e:
+            # log.debug(f"🔴 Proxy {proxy_str[:20]}... FAILED: {e}")
+            return False
 
-logger.info(f"📱 {len(ALL_ACCOUNTS)} اکانت")
-logger.info(f"📡 {len(CHANNELS)} کانال")
-logger.info(f"🎭 {len(REACTIONS)} ریاکشن")
-logger.info(f"🛡️ ضد بن فعال - حداکثر {MAX_OPERATIONS_PER_RUN} عملیات")
+    async def update_proxies(self):
+        """به‌روزرسانی لیست پروکسی‌ها"""
+        async with self.lock:
+            log.info("🔄 Updating Proxy List...")
+            
+            # 1. دریافت از API
+            new_raw_proxies = []
+            for url in PROXY_API_URLS:
+                found = await self.fetch_proxies(url)
+                new_raw_proxies.extend(found)
+            
+            if not new_raw_proxies:
+                log.warning("⚠️ No proxies fetched from API, using initial list.")
+                new_raw_proxies = INITIAL_PROXIES
 
-# ==================== Gist Functions ====================
-def load_sessions_from_gist():
-    if not GIST_TOKEN or not GIST_ID:
-        return
-    try:
-        headers = {"Authorization": f"token {GIST_TOKEN}"}
-        resp = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers, timeout=15)
-        if resp.status_code != 200:
-            return
-        files = resp.json().get("files", {})
-        if "sessions_pro.json" not in files:
-            return
-        saved = json.loads(files["sessions_pro.json"]["content"])
-        count = 0
-        for acc in ALL_ACCOUNTS:
-            if acc["phone"] in saved and len(saved[acc["phone"]]) > 50:
-                acc["session"] = saved[acc["phone"]]
-                count += 1
-        logger.info(f"✅ {count} سشن از Gist بارگذاری شد")
-    except:
-        pass
+            # 2. تست و فیلتر کردن
+            valid_proxies = []
+            for p in new_raw_proxies[:50]: # تست حداکثر 50 تای اول برای سرعت
+                if await self.test_proxy(p):
+                    valid_proxies.append(p)
+            
+            # اگر لیست خالی بود، از اولیه استفاده کن
+            if not valid_proxies:
+                log.warning("⚠️ No fast proxies found, falling back to initial list.")
+                valid_proxies = INITIAL_PROXIES
+            
+            self.proxies = valid_proxies
+            log.info(f"✅ Active Proxy List Size: {len(self.proxies)}")
 
-def save_sessions_to_gist(accounts):
-    if not GIST_TOKEN or not GIST_ID:
-        return
-    try:
-        data = {acc["phone"]: acc["session"] for acc in accounts}
-        headers = {"Authorization": f"token {GIST_TOKEN}"}
-        resp = requests.patch(
-            f"https://api.github.com/gists/{GIST_ID}",
-            headers=headers,
-            json={"files": {"sessions_pro.json": {"content": json.dumps(data, indent=2)}}},
-            timeout=15
-        )
-        if resp.status_code == 200:
-            logger.info(f"✅ {len(data)} سشن ذخیره شد")
-    except:
-        pass
+    def get_next_proxy(self):
+        """انتخاب چرخشی پروکسی"""
+        if not self.proxies:
+            return None
+        
+        # انتخاب تصادفی برای جلوگیری از الگوی ثابت
+        return random.choice(self.proxies)
 
-# ==================== Helper Functions ====================
-def smart_delay(min_s=3, max_s=12):
-    base = random.uniform(min_s, max_s)
-    noise = random.uniform(-1, 2)
-    return asyncio.sleep(max(1, base + noise))
+    @staticmethod
+    def parse(proxy_str):
+        """پارس کردن رشته پروکسی"""
+        try:
+            clean_url = proxy_str.replace("socks5://", "").replace("http://", "")
+            if "@" in clean_url:
+                auth_part, host_port = clean_url.rsplit("@", 1)
+                user_pass, ip_port = auth_part.split(":", 1) if ":" in auth_part else ("", "")
+                ip, port = host_port.rsplit(":", 1)
+                return ("socks5", ip, int(port), user_pass, "") # Telethon format: proto, host, port, user, password
+            else:
+                ip, port = clean_url.rsplit(":", 1)
+                return ("socks5", ip, int(port))
+        except Exception as e:
+            return None
 
-def is_fresh_post(msg, hours=24):
-    if not msg.date:
-        return False
-    now = datetime.now(msg.date.tzinfo)
-    return (now - msg.date) < timedelta(hours=hours)
+# ایجاد مدیریت پروکسی
+proxy_manager = ProxyManager()
 
-def extract_ad_links(message_text):
-    if not message_text:
-        return []
-    patterns = [
-        r't\.me/joinchat/([a-zA-Z0-9_-]+)',
-        r't\.me/\+([a-zA-Z0-9_-]+)',
-        r't\.me/([a-zA-Z][a-zA-Z0-9_]{3,30})',
-        r'https?://t\.me/[a-zA-Z0-9_]+',
-    ]
-    found_links = []
-    for pattern in patterns:
-        matches = re.findall(pattern, message_text)
-        found_links.extend(matches)
-    return found_links
+# ================== Accounts ==================
+ALL_ACCOUNTS = []
+for i in range(1, 6): 
+    session = os.getenv(f"SESSION_{i}")
+    phone = os.getenv(f"PHONE_{i}")
+    
+    # استفاده از پروکسی مدیریت شده
+    acc_proxy_str = proxy_manager.get_next_proxy()
+    acc_proxy = proxy_manager.parse(acc_proxy_str) if acc_proxy_str else None
 
-def extract_entities_links(msg):
+    if not session or not phone:
+        continue
+            
+    ALL_ACCOUNTS.append({
+        "index": i,
+        "phone": phone,
+        "session": session,
+        "proxy": acc_proxy,
+        "label": phone[-4:],
+    })
+
+log.info(f"📱 Loaded {len(ALL_ACCOUNTS)} accounts | 🌐 Active Proxies: {len(proxy_manager.proxies)}")
+
+# ================== Helpers ==================
+
+async def rand_delay_short():
+    await asyncio.sleep(random.uniform(1, 4))
+
+def is_fresh(msg, hours=24):
+    if not msg.date: return False
+    now = datetime.utcnow()
+    delta = now - msg.date
+    return delta.total_seconds() < (hours * 3600)
+
+def extract_ad_links(text):
+    if not text: return []
+    patterns = [r't\.me/joinchat/([a-zA-Z0-9_-]+)', r't\.me/\+([a-zA-Z0-9_-]+)', r'https?://t\.me/[a-zA-Z0-9_]+']
     links = []
-    if msg.entities:
-        for entity in msg.entities:
-            if isinstance(entity, (MessageEntityTextUrl, MessageEntityUrl)):
-                url = entity.url if isinstance(entity, MessageEntityTextUrl) else msg.text[entity.offset:entity.offset+entity.length]
-                if 't.me' in url:
-                    links.append(url)
-    return links
+    for p in patterns:
+        links.extend(re.findall(p, text))
+    return list(set(links))
 
-# ==================== Channel Processing ====================
-async def process_channel(client, phone_label, channel, operations_count):
+async def wait_flood_wait(client, error):
+    log.warning(f"FloodWait detected: {error.seconds}s. Sleeping...")
+    await asyncio.sleep(error.seconds + 5)
+
+# ================== Core Flow ==================
+
+async def process_channel(client, label, channel, op_cnt):
     try:
-        entity = await client.get_entity(channel)
-        channel_name = getattr(entity, 'title', str(channel))[:30]
-        limit = 50
-        msgs = await client.get_messages(entity, limit=limit)
+        ent = await client.get_entity(channel)
+        title = getattr(ent, "title", str(channel))[:30]
+        
+        msgs = await client.get_messages(ent, limit=30)
+        fresh = [m for m in msgs if is_fresh(m)]
+        
+        if not fresh:
+            return op_cnt
 
-        if not msgs:
-            logger.info(f"  [{phone_label}] - {channel_name} → خالی")
-            return operations_count
+        select_count = max(1, int(len(fresh) * random.uniform(0.3, 0.7)))
+        selected_msgs = random.sample(fresh, k=min(select_count, len(fresh)))
+        
+        log.info(f"  [{label}] 📬 {title} → Processing {len(selected_msgs)} posts")
 
-        fresh_posts = [msg for msg in msgs if is_fresh_post(msg)]
-        logger.info(f"  [{phone_label}] 📬 {channel_name} → {len(fresh_posts)} پست جدید از {len(msgs)} کل")
+        for msg in selected_msgs:
+            if op_cnt >= MAX_OPERATIONS_PER_RUN:
+                return op_cnt
 
-        if not fresh_posts:
-            logger.info(f"  [{phone_label}] ℹ️ {channel_name} → پست جدیدی نیست")
-            return operations_count
-
-        for msg in fresh_posts[:10]:
-            if operations_count >= MAX_OPERATIONS_PER_RUN:
-                logger.info(f"  [{phone_label}] ⚠️ به حد نصاب عملیات رسیدیم")
-                return operations_count
-
-            await smart_delay(5, 15)
-
-            # 1. سین کردن
-            await client.send_read_acknowledge(entity, max_id=msg.id)
-            operations_count += 1
-            logger.info(f"  [{phone_label}] ✓ سین شد: پست {msg.id}")
-
-            await smart_delay(3, 8)
-
-            # 2. ویو
-            try:
-                await client(GetMessagesViewsRequest(peer=entity, id=[msg.id], increment=True))
-                operations_count += 1
-                logger.info(f"  [{phone_label}] 👁️ ویو: پست {msg.id}")
-            except FloodWaitError as e:
-                logger.warning(f"  [{phone_label}] ⏳ FloodWait: {e.seconds}s")
-                await asyncio.sleep(min(e.seconds, 30))
-                continue
-
-            await smart_delay(4, 10)
-
-            # 3. ریاکشن
-            if random.random() < REACTION_PROBABILITY:
-                chosen_reaction = random.choice(REACTIONS)
+            # 1. Read
+            if random.random() < 0.9:
+                await rand_delay_short()
                 try:
-                    await client(SendReactionRequest(
-                        peer=entity,
-                        msg_id=msg.id,
-                        reaction=[ReactionEmoji(emoticon=chosen_reaction)]
-                    ))
-                    operations_count += 1
-                    logger.info(f"  [{phone_label}] 🎭 ریاکشن {chosen_reaction} روی پست {msg.id}")
-                except FloodWaitError as e:
-                    logger.warning(f"  [{phone_label}] ⏳ FloodWait ریاکشن: {e.seconds}s")
-                    await asyncio.sleep(min(e.seconds, 30))
-                except Exception as e:
-                    if "REACTION_INVALID" in str(e):
-                        pass
-                    else:
-                        logger.debug(f"  [{phone_label}] ℹ️ ریاکشن: {str(e)[:40]}")
+                    await client.send_read_acknowledge(ent, messages=[msg])
+                    op_cnt += 1
+                except Exception: pass
 
-            # 4. کلیک روی اد تلگرام
+            await rand_delay_short()
+
+            # 2. View
+            if random.random() < 0.4:
+                try:
+                    await client(GetMessagesViewsRequest(peer=ent, id=[msg.id], increment=True))
+                    op_cnt += 1
+                except FloodWaitError as e:
+                    await wait_flood_wait(client, e)
+                    continue
+
+            await rand_delay_short()
+
+            # 3. Reaction
+            if random.random() < REACTION_PROBABILITY:
+                react = random.choice(REACTIONS)
+                try:
+                    await client(SendReactionRequest(peer=ent, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=react)]))
+                    op_cnt += 1
+                except Exception: pass
+
+            await rand_delay_short()
+
+            # 4. Join/Leave Ads
             if msg.text:
                 ad_links = extract_ad_links(msg.text)
-                entity_links = extract_entities_links(msg)
-                all_links = list(set(ad_links + entity_links))
+                all_links = list(set(ad_links)) 
+                
+                if all_links and random.random() < 0.3:
+                    link = all_links[0]
+                    
+                    await asyncio.sleep(JOIN_CLICK_DELAY) 
+                    
+                    try:
+                        if "joinchat/" in link or "/+" in link:
+                            hash_part = (
+                                link.split("joinchat/")[1] if "joinchat/" in link
+                                else link.split("/+")[1]
+                            ).split()[0]
+                            
+                            invite = await client(ImportChatInviteRequest(hash_part))
+                            joined_chat = invite.chat
+                            
+                            stay_duration = random.randint(JOIN_LEAVE_MIN_DELAY, JOIN_LEAVE_MAX_DELAY)
+                            log.debug(f"  [{label}] 🔗 Joined {hash_part[:10]}... waiting {stay_duration}s")
+                            
+                            await asyncio.sleep(stay_duration)
+                            
+                            try:
+                                await client(LeaveChannelRequest(joined_chat))
+                                op_cnt += 1
+                                log.debug(f"  [{label}] 🔙 Left channel")
+                            except Exception as e:
+                                log.debug(f"  [{label}] Leave error: {e}")
+                    except Exception as e:
+                        log.debug(f"  [{label}] Join/Leave error: {e}")
 
-                if all_links and random.random() < 0.6:
-                    for link in all_links[:2]:
-                        if operations_count >= MAX_OPERATIONS_PER_RUN:
-                            break
+            await rand_delay_short()
 
-                        await smart_delay(10, 25)
-                        try:
-                            if 'joinchat' in link or '/+' in link:
-                                if 'joinchat/' in link:
-                                    hash_part = link.split('joinchat/')[1].split()[0]
-                                else:
-                                    hash_part = link.split('/+')[1].split()[0]
+        return op_cnt
 
-                                try:
-                                    # عضویت در کانال
-                                    invite_res = await client(ImportChatInviteRequest(hash_part))
-                                    joined_chat = invite_res.chat
-                                    logger.info(f"  [{phone_label}] ✅ عضو شد: {hash_part[:10]}...")
-                                    operations_count += 1
-
-                                    # --------- خروج فوری پس از join ----------
-                                    await smart_delay(0.5, 1.5)            # تاخیر کوتاه
-                                    try:
-                                        await client(LeaveChatRequest(joined_chat))
-                                        operations_count += 1
-                                        title = joined_chat.title if hasattr(joined_chat, "title") else joined_chat.id
-                                        logger.info(f"  [{phone_label}] 🔙 ترک شد: {title}")
-                                    except Exception as leave_err:
-                                        logger.debug(f"  [{phone_label}] ⚠️ خروج ناموفق: {leave_err}")
-
-                                except Exception as join_err:
-                                    logger.info(f"  [{phone_label}] ℹ️ عضویت ممکن نبود: {str(join_err)[:40]}")
-                            elif link.startswith('http') or link.startswith('@'):
-                                await smart_delay(5, 12)
-                                logger.info(f"  [{phone_label}] 🔗 کلیک روی لینک: {link[:30]}...")
-                                operations_count += 1
-                        except Exception as click_err:
-                            logger.debug(f"  [{phone_label}] ℹ️ خطای کلیک: {str(click_err)[:40]}")
-
-            await smart_delay(8, 18)
-
-        return operations_count
-
-    except ValueError as e:
-        if "Cannot find any entity" in str(e):
-            logger.warning(f"  [{phone_label}] ❌ {channel[:30]} → جوین نیستید")
-        else:
-            logger.error(f"  [{phone_label}] ❌ {channel[:30]} → {str(e)[:50]}")
-        return operations_count
     except FloodWaitError as e:
-        wait = min(e.seconds, 60) + random.randint(5, 10)
-        logger.warning(f"  [{phone_label}] ⏳ FloodWait {e.seconds}s → sleep {wait}s")
-        await asyncio.sleep(wait)
-        return operations_count
+        await wait_flood_wait(client, e)
     except Exception as e:
-        logger.error(f"  [{phone_label}] ❌ {channel[:30]} → {str(e)[:50]}")
-        return operations_count
+        log.error(f"  [{label}] Error: {e}")
+        
+    return op_cnt
 
-# ==================== Account Runner ====================
 async def run_account(acc):
     try:
-        phone = acc["phone"]
-        label = acc["label"]
-        proxy = acc.get("proxy")
-
-        device = random.choice(DEVICE_MODELS)
-        system = random.choice(SYSTEM_VERSIONS)
-        app = random.choice(APP_VERSIONS)
-        lang = random.choice(["en", "fa", "ar", "tr", "de"])
-
-        logger.info(f"[{label}] 📱 {device} | {system} | v{app}")
-        if proxy:
-            logger.info(f"[{label}] 🔒 پروکسی فعال: {proxy[1]}:{proxy[2]}")
-
         client = TelegramClient(
             StringSession(acc["session"]),
             API_ID,
             API_HASH,
-            device_model=device,
-            system_version=system,
-            app_version=app,
-            lang_code=lang,
-            proxy=proxy,
-            connection_retries=3,
-            timeout=30
+            device_model=random.choice(DEVICE_MODELS),
+            system_version=random.choice(SYSTEM_VERSIONS),
+            app_version=random.choice(APP_VERSIONS),
+            proxy=acc["proxy"], 
+            connection_retries=5,
+            timeout=30,
         )
-
+        
         await client.start()
         me = await client.get_me()
-        logger.info(f"[{label}] ✅ {me.first_name} (@{me.username or '---'})")
+        log.info(f"[{acc['label']}] ✅ Logged in as {me.first_name}")
 
-        operations_count = 0
+        op_cnt = 0
+        await asyncio.sleep(random.uniform(5, 15))
 
-        try:
-            await me.phone
-        except AuthKeyDuplicatedError:
-            logger.warning(f"[{label}] ⛔ کلید احراز هویت تکراری - احتمال بن!")
-            await client.disconnect()
-            return False
-
-        await smart_delay(10, 20)
-
-        for idx, channel in enumerate(CHANNELS):
-            if operations_count >= MAX_OPERATIONS_PER_RUN:
-                logger.info(f"[{label}] ⚠️ به حد نصاب {MAX_OPERATIONS_PER_RUN} عملیات رسیدیم")
-                break
-
-            if idx > 0:
+        for i, ch in enumerate(CHANNELS):
+            if op_cnt >= MAX_OPERATIONS_PER_RUN: break
+            
+            if i > 0:
                 delay = random.randint(MIN_DELAY_BETWEEN_CHANNELS, MAX_DELAY_BETWEEN_CHANNELS)
-                logger.info(f"[{label}] ⏳ {delay}s تا کانال بعدی...")
+                log.info(f"  [{acc['label']}] ⏳ Waiting {delay}s...")
                 await asyncio.sleep(delay)
+                
+            op_cnt = await process_channel(client, acc["label"], ch, op_cnt)
 
-            operations_count = await process_channel(client, label, channel, operations_count)
+        if client.session.changed:
+            acc["session"] = client.session.save()
 
-        acc["session"] = client.session.save()
         await client.disconnect()
-        logger.info(f"[{label}] 🏁 تکمیل ({operations_count} عملیات)")
+        log.info(f"[{acc['label']}] 🏁 Finished. Ops: {op_cnt}")
         return True
 
+    except FloodWaitError as e:
+        log.error(f"[{acc['label']}] Heavy Flood Wait: {e.seconds}s")
+        await asyncio.sleep(e.seconds + 10)
+        return False
+    except AuthKeyDuplicatedError:
+        log.error(f"[{acc['label']}] Auth Key Duplicated")
+        return False
     except Exception as e:
-        logger.error(f"[{label}] ❌ خطا: {str(e)[:80]}")
-        if "key" in str(e).lower() or "auth" in str(e).lower():
-            logger.warning(f"[{label}] ⛔ احتمال بن شدن اکانت!")
+        log.error(f"[{acc['label']}] Fatal: {e}")
         return False
 
-# ==================== Main ====================
 async def main():
-    logger.info("=" * 70)
-    logger.info(f"🚀 شروع نسخه حرفه‌ای با ضد بن")
-    logger.info(f"📱 {len(ALL_ACCOUNTS)} اکانت × {len(CHANNELS)} کانال")
-    logger.info(f"🎭 {len(REACTIONS)} ریاکشن | احتمال: {int(REACTION_PROBABILITY*100)}%")
-    logger.info(f"🛡️ حداکثر {MAX_OPERATIONS_PER_RUN} عملیات در هر اکانت")
-    logger.info(f"⏱️ تأخیر بین کانال‌ها: {MIN_DELAY_BETWEEN_CHANNELS}-{MAX_DELAY_BETWEEN_CHANNELS}s")
-    logger.info(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 70)
+    log.info("=" * 60)
+    log.info("🚀 TG Viewer Pro (Auto Proxy Discovery)")
+    log.info("=" * 60)
 
-    load_sessions_from_gist()
+    # 1. کشف اولیه پروکسی‌ها
+    await proxy_manager.update_proxies()
 
-    shuffled = ALL_ACCOUNTS.copy()
-    random.shuffle(shuffled)
+    random.shuffle(ALL_ACCOUNTS)
+    success_count = 0
 
-    success = 0
-    for idx, acc in enumerate(shuffled):
-        logger.info(f"\n{'─'*50}")
-        logger.info(f"📌 [{idx+1}/{len(shuffled)}] اکانت #{acc['index']} ({acc['label']})")
-        logger.info(f"{'─'*50}")
-
+    for i, acc in enumerate(ALL_ACCOUNTS):
+        log.info(f"\n{'='*40}\n📌 Account {i+1}/{len(ALL_ACCOUNTS)}: #{acc['index']}")
+        
         if await run_account(acc):
-            success += 1
+            success_count += 1
+        
+        # خواب بین اکانت‌ها
+        sleep_time = random.randint(90, 240) 
+        log.info(f"⏳ Sleeping {sleep_time}s before next account...")
+        await asyncio.sleep(sleep_time)
 
-        if idx < len(shuffled) - 1:
-            delay = random.randint(45, 120)
-            logger.info(f"⏳ {delay}s تا اکانت بعدی...")
-            await asyncio.sleep(delay)
-
-    save_sessions_to_gist(ALL_ACCOUNTS)
-
-    logger.info("\n" + "=" * 70)
-    logger.info(f"🏁 {success}/{len(ALL_ACCOUNTS)} موفق")
-    logger.info(f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("=" * 70)
+    log.info("\n" + "=" * 60)
+    log.info(f"🏁 Done. Success: {success_count}/{len(ALL_ACCOUNTS)}")
+    log.info("=" * 60)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("⛔ متوقف شد")
-    except Exception as e:
-        logger.error(f"💥 خطای بحرانی: {e}")
+        log.info("⛔ Stopped by user")
