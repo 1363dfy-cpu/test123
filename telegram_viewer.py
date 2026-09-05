@@ -9,8 +9,9 @@ from telethon.errors import FloodWaitError, AuthKeyDuplicatedError
 from telethon.tl.functions.messages import (
     GetMessagesViewsRequest,
     SendReactionRequest,
+    ImportChatInviteRequest,  # ✅ اینجا درست است
 )
-from telethon.tl.functions.channels import LeaveChannelRequest, ImportChatInviteRequest
+from telethon.tl.functions.channels import LeaveChannelRequest  # ✅ این یکی در channels درست است
 from telethon.tl.types import ReactionEmoji
 
 # ================== نصب پیش‌نیاز ==================
