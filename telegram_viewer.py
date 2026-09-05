@@ -9,14 +9,10 @@ from telethon.errors import FloodWaitError, AuthKeyDuplicatedError
 from telethon.tl.functions.messages import (
     GetMessagesViewsRequest,
     SendReactionRequest,
-    ImportChatInviteRequest,  # ✅ اینجا درست است
+    ImportChatInviteRequest,
 )
-from telethon.tl.functions.channels import LeaveChannelRequest  # ✅ این یکی در channels درست است
+from telethon.tl.functions.channels import LeaveChannelRequest
 from telethon.tl.types import ReactionEmoji
-
-# ================== نصب پیش‌نیاز ==================
-# pip install aio_socks   یا    pip install socks-py
-# pip install requests aiohttp
 
 # ================== Logging ==================
 logging.basicConfig(
@@ -27,17 +23,18 @@ logging.basicConfig(
 log = logging.getLogger("TGViewer_Pro")
 
 # ================== Constants ==================
-MAX_OPERATIONS_PER_RUN = 25          
-MIN_DELAY_BETWEEN_CHANNELS = 20
-MAX_DELAY_BETWEEN_CHANNELS = 120     
+MAX_OPERATIONS_PER_RUN = 200
+MIN_DELAY_BETWEEN_CHANNELS = 10
+MAX_DELAY_BETWEEN_CHANNELS = 30     
 
-# تنظیمات Join/Leave Ads
-JOIN_LEAVE_MIN_DELAY = 15            
-JOIN_LEAVE_MAX_DELAY = 60            
-JOIN_CLICK_DELAY = 2                 
+# تنظیمات Join/Leave Ads - فعال روی همه پست‌ها
+JOIN_LEAVE_MIN_DELAY = 5   # حداقل ۵ ثانیه توی کانال بمونه
+JOIN_LEAVE_MAX_DELAY = 15  # حداکثر ۱۵ ثانیه
+JOIN_CLICK_DELAY = 1       # تأخیر قبل از کلیک
+JOIN_LEAVE_PROBABILITY = 0.8  # 80% شانس Join/Leave روی هر پست
 
 REACTIONS = ["👍", "❤️", "🔥", "🎉", "🤔"] 
-REACTION_PROBABILITY = 0.6
+REACTION_PROBABILITY = 1.0
 
 DEVICE_MODELS = [
     "Samsung Galaxy S24 Ultra",
@@ -45,9 +42,14 @@ DEVICE_MODELS = [
     "OnePlus 12R",
     "Xiaomi 14 Pro",
     "Google Pixel 8 Pro",
+    "Samsung Galaxy S23",
+    "iPhone 14",
+    "Xiaomi 13T",
+    "Huawei P60 Pro",
+    "Oppo Find X7",
 ]
-SYSTEM_VERSIONS = ["Android 14", "iOS 17.4.1", "Android 13"]
-APP_VERSIONS = ["10.5.x", "10.4.2"]
+SYSTEM_VERSIONS = ["Android 14", "iOS 17.4.1", "Android 13", "iOS 17.2", "Android 12"]
+APP_VERSIONS = ["10.5.x", "10.4.2", "10.3.1", "10.2.0"]
 
 # ================== Env Variables ==================
 API_ID = int(os.getenv("API_ID"))
@@ -60,28 +62,26 @@ GIST_ID = os.getenv("GIST_ID")
 
 # ================== Account Setup ==================
 ALL_ACCOUNTS = []
-for i in range(1, 6): 
+MAX_ACCOUNTS = 10
+
+for i in range(1, MAX_ACCOUNTS + 1):
     session = os.getenv(f"SESSION_{i}")
     phone = os.getenv(f"PHONE_{i}")
     
     if not session or not phone:
         continue
     
-    # گرفتن پروکسی از متغیر محیطی (اگر خالی بود None)
     proxy_str = os.getenv(f"PROXY_{i}", "")
     
-    # پارس کردن پروکسی
     parsed_proxy = None
     if proxy_str:
         try:
-            # فرمت: socks5://user:pass@host:port  یا  socks5://host:port
             if "socks5://" in proxy_str:
                 clean = proxy_str.replace("socks5://", "")
                 if "@" in clean:
                     auth, hostport = clean.split("@")
                     user, password = auth.split(":", 1) if ":" in auth else (auth, "")
                     host, port = hostport.split(":")
-                    # فرمت صحیح Telethon برای socks5 با احراز هویت
                     parsed_proxy = ("socks5", host, int(port), True, user, password)
                 else:
                     host, port = clean.split(":")
@@ -93,7 +93,7 @@ for i in range(1, 6):
         "index": i,
         "phone": phone,
         "session": session,
-        "proxy": parsed_proxy,  # None or tuple
+        "proxy": parsed_proxy,
         "label": phone[-4:],
     })
 
@@ -102,22 +102,48 @@ log.info(f"📱 Loaded {len(ALL_ACCOUNTS)} accounts")
 # ================== Helper Functions ==================
 
 async def rand_delay_short():
-    await asyncio.sleep(random.uniform(2, 6))
+    await asyncio.sleep(random.uniform(1, 3))
+
+async def rand_delay_medium():
+    await asyncio.sleep(random.uniform(3, 7))
 
 def is_fresh(msg, hours=24):
     if not msg.date: return False
-    # اصلاح: استفاده از تاریخ UTC
     now = datetime.now(msg.date.tzinfo) if msg.date.tzinfo else datetime.utcnow()
     delta = now - msg.date
     return delta.total_seconds() < (hours * 3600)
 
 def extract_ad_links(text):
+    """استخراج لینک‌های تبلیغاتی از متن پست"""
     if not text: return []
-    patterns = [r't\.me/joinchat/([a-zA-Z0-9_-]+)', r't\.me/\+([a-zA-Z0-9_-]+)', r'https?://t\.me/[a-zA-Z0-9_]+']
+    
+    patterns = [
+        # لینک دعوت خصوصی
+        r't\.me/joinchat/([a-zA-Z0-9_-]+)',
+        # لینک دعوت عمومی
+        r't\.me/\+([a-zA-Z0-9_-]+)',
+        # لینک کانال عمومی
+        r'https?://t\.me/[a-zA-Z0-9_]+',
+        # لینک بدون https
+        r't\.me/[a-zA-Z0-9_]+',
+    ]
+    
     links = []
     for p in patterns:
-        links.extend(re.findall(p, text))
-    return list(set(links))
+        matches = re.findall(p, text, re.IGNORECASE)
+        links.extend(matches)
+    
+    # حذف تکراری‌ها
+    unique_links = list(set(links))
+    
+    # فیلتر کردن لینک‌های معتبر
+    valid_links = []
+    for link in unique_links:
+        # لینک‌های joinchat یا + را نگه میداریم
+        if "joinchat" in str(link) or "+" in str(link) or "t.me" in str(link):
+            valid_links.append(link)
+    
+    return valid_links
 
 async def wait_flood_wait(client, error):
     wait_time = min(error.seconds, 60) + random.randint(5, 15)
@@ -131,99 +157,137 @@ async def process_channel(client, label, channel, op_cnt):
         ent = await client.get_entity(channel)
         title = getattr(ent, "title", str(channel))[:30]
         
-        msgs = await client.get_messages(ent, limit=30)
+        # دریافت ۵۰ پست آخر
+        msgs = await client.get_messages(ent, limit=50)
         fresh = [m for m in msgs if is_fresh(m)]
         
         if not fresh:
             log.info(f"  [{label}] 📭 {title} → no new posts")
             return op_cnt
 
-        select_count = max(1, int(len(fresh) * random.uniform(0.3, 0.7)))
-        selected_msgs = random.sample(fresh, k=min(select_count, len(fresh)))
-        
-        log.info(f"  [{label}] 📬 {title} → Processing {len(selected_msgs)} posts")
+        log.info(f"  [{label}] 📬 {title} → {len(fresh)} new posts found")
 
-        for msg in selected_msgs:
+        for msg in fresh:
             if op_cnt >= MAX_OPERATIONS_PER_RUN:
                 log.info(f"  [{label}] ⚠️ Max ops reached")
                 return op_cnt
 
-            # 1. Read
-            if random.random() < 0.9:
-                await rand_delay_short()
-                try:
-                    await client.send_read_acknowledge(ent, messages=[msg])
-                    op_cnt += 1
-                except Exception as e:
-                    log.debug(f"  [{label}] Read error: {e}")
+            log.info(f"  [{label}] 🔄 Processing post #{msg.id}")
 
+            # 1. Read
             await rand_delay_short()
+            try:
+                await client.send_read_acknowledge(ent, messages=[msg])
+                op_cnt += 1
+                log.info(f"  [{label}] ✓ Read post #{msg.id}")
+            except Exception as e:
+                log.debug(f"  [{label}] Read error: {e}")
+
+            await rand_delay_medium()
 
             # 2. View
-            if random.random() < 0.4:
-                try:
-                    await client(GetMessagesViewsRequest(peer=ent, id=[msg.id], increment=True))
-                    op_cnt += 1
-                except FloodWaitError as e:
-                    await wait_flood_wait(client, e)
-                    continue
-                except Exception as e:
-                    log.debug(f"  [{label}] View error: {e}")
+            try:
+                await client(GetMessagesViewsRequest(peer=ent, id=[msg.id], increment=True))
+                op_cnt += 1
+                log.info(f"  [{label}] 👁️ View added to post #{msg.id}")
+            except FloodWaitError as e:
+                await wait_flood_wait(client, e)
+                continue
+            except Exception as e:
+                log.debug(f"  [{label}] View error: {e}")
 
-            await rand_delay_short()
+            await rand_delay_medium()
 
             # 3. Reaction
-            if random.random() < REACTION_PROBABILITY:
-                react = random.choice(REACTIONS)
-                try:
-                    await client(SendReactionRequest(peer=ent, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=react)]))
-                    op_cnt += 1
-                except FloodWaitError as e:
-                    await wait_flood_wait(client, e)
-                except Exception as e:
-                    log.debug(f"  [{label}] Reaction error: {e}")
+            react = random.choice(REACTIONS)
+            try:
+                await client(SendReactionRequest(
+                    peer=ent, 
+                    msg_id=msg.id, 
+                    reaction=[ReactionEmoji(emoticon=react)]
+                ))
+                op_cnt += 1
+                log.info(f"  [{label}] 🎭 Reaction {react} on post #{msg.id}")
+            except FloodWaitError as e:
+                await wait_flood_wait(client, e)
+            except Exception as e:
+                log.debug(f"  [{label}] Reaction error: {e}")
 
-            await rand_delay_short()
+            await rand_delay_medium()
 
-            # 4. Join/Leave Ads
-            if msg.text and random.random() < 0.3:
+            # 4. ✅ Join/Leave Ads - فعال با 80% شانس
+            if msg.text and random.random() < JOIN_LEAVE_PROBABILITY:
                 ad_links = extract_ad_links(msg.text)
                 
+                log.info(f"  [{label}] 🔍 Found {len(ad_links)} ad links in post #{msg.id}")
+                
                 if ad_links:
-                    link = ad_links[0]
+                    # انتخاب یک لینک تصادفی
+                    link = random.choice(ad_links)
                     
-                    # استخراج hash برای join
+                    # استخراج hash
                     hash_part = None
-                    if "joinchat/" in link:
-                        hash_part = link.split("joinchat/")[1].split()[0]
-                    elif "/+" in link:
-                        hash_part = link.split("/+")[1].split()[0]
+                    link_str = str(link)
+                    
+                    if "joinchat/" in link_str:
+                        hash_part = link_str.split("joinchat/")[1].split()[0]
+                    elif "/+" in link_str:
+                        hash_part = link_str.split("/+")[1].split()[0]
+                    elif "t.me/" in link_str:
+                        # لینک کانال عمومی - نیاز به username
+                        username = link_str.split("t.me/")[1].split()[0]
+                        hash_part = None  # برای کانال عمومی از روش دیگه استفاده میکنیم
                     
                     if hash_part:
                         await asyncio.sleep(JOIN_CLICK_DELAY)
                         try:
-                            # Join channel
+                            log.info(f"  [{label}] 🔗 Attempting to join {hash_part[:12]}...")
+                            
+                            # JOIN
                             result = await client(ImportChatInviteRequest(hash_part))
+                            
                             if hasattr(result, 'chats') and result.chats:
                                 joined = result.chats[0]
-                                log.info(f"  [{label}] 🔗 Joined {hash_part[:8]}...")
+                                joined_title = getattr(joined, 'title', 'Unknown')[:20]
+                                log.info(f"  [{label}] ✅ Joined channel: {joined_title}")
                                 
-                                # Stay then leave
+                                # ماندن تصادفی در کانال
                                 stay = random.randint(JOIN_LEAVE_MIN_DELAY, JOIN_LEAVE_MAX_DELAY)
+                                log.info(f"  [{label}] ⏳ Staying {stay}s in {joined_title}")
                                 await asyncio.sleep(stay)
                                 
+                                # LEAVE
                                 try:
                                     await client(LeaveChannelRequest(joined))
-                                    log.info(f"  [{label}] 🔙 Left channel")
-                                    op_cnt += 2  # Join + Leave
+                                    log.info(f"  [{label}] 🔙 Left channel: {joined_title}")
+                                    op_cnt += 2  # Join + Leave = 2 operations
                                 except Exception as e:
-                                    log.debug(f"  [{label}] Leave error: {e}")
+                                    log.warning(f"  [{label}] ⚠️ Leave error: {e}")
+                            else:
+                                log.warning(f"  [{label}] ⚠️ No chat returned from invite")
+                                
                         except FloodWaitError as e:
                             await wait_flood_wait(client, e)
                         except Exception as e:
                             log.debug(f"  [{label}] Join error: {e}")
+                    else:
+                        # برای کانال‌های عمومی (بدون hash)
+                        log.info(f"  [{label}] 📎 Found public channel link: {link_str[:30]}...")
+                        # میتونیم از روش get_entity استفاده کنیم
+                        try:
+                            username = link_str.split("t.me/")[1].split()[0]
+                            entity = await client.get_entity(username)
+                            if entity:
+                                log.info(f"  [{label}] ✅ Joined public channel: {username}")
+                                stay = random.randint(JOIN_LEAVE_MIN_DELAY, JOIN_LEAVE_MAX_DELAY)
+                                await asyncio.sleep(stay)
+                                await client(LeaveChannelRequest(entity))
+                                log.info(f"  [{label}] 🔙 Left public channel: {username}")
+                                op_cnt += 2
+                        except Exception as e:
+                            log.debug(f"  [{label}] Public channel error: {e}")
 
-            await rand_delay_short()
+            await rand_delay_medium()
 
         return op_cnt
 
@@ -236,7 +300,6 @@ async def process_channel(client, label, channel, op_cnt):
 
 async def run_account(acc):
     try:
-        # تنظیمات تصادفی device
         device = random.choice(DEVICE_MODELS)
         system = random.choice(SYSTEM_VERSIONS)
         app = random.choice(APP_VERSIONS)
@@ -247,7 +310,6 @@ async def run_account(acc):
         else:
             log.info(f"[{acc['label']}] 🔓 No proxy")
         
-        # ایجاد کلاینت
         client = TelegramClient(
             StringSession(acc["session"]),
             API_ID,
@@ -269,12 +331,12 @@ async def run_account(acc):
 
         for i, ch in enumerate(CHANNELS):
             if op_cnt >= MAX_OPERATIONS_PER_RUN: 
-                log.info(f"[{acc['label']}] ⚠️ Max ops ({MAX_OPERATIONS_PER_RUN}) reached")
+                log.info(f"[{acc['label']}] ⚠️ Max ops reached")
                 break
             
             if i > 0:
                 delay = random.randint(MIN_DELAY_BETWEEN_CHANNELS, MAX_DELAY_BETWEEN_CHANNELS)
-                log.info(f"[{acc['label']}] ⏳ {delay}s wait...")
+                log.info(f"[{acc['label']}] ⏳ {delay}s wait before next channel...")
                 await asyncio.sleep(delay)
                 
             op_cnt = await process_channel(client, acc["label"], ch, op_cnt)
@@ -300,9 +362,10 @@ async def run_account(acc):
 
 async def main():
     log.info("=" * 60)
-    log.info("🚀 TG Viewer Pro - Version Fix")
+    log.info("🚀 TG Viewer Pro - Join/Leave Ads Active")
     log.info(f"📱 {len(ALL_ACCOUNTS)} accounts | 📡 {len(CHANNELS)} channels")
-    log.info(f"🛡️ Max ops/run: {MAX_OPERATIONS_PER_RUN}")
+    log.info(f"🎯 Join/Leave Probability: {JOIN_LEAVE_PROBABILITY*100}%")
+    log.info(f"⏱️ Stay duration: {JOIN_LEAVE_MIN_DELAY}-{JOIN_LEAVE_MAX_DELAY}s")
     log.info("=" * 60)
 
     random.shuffle(ALL_ACCOUNTS)
@@ -316,10 +379,9 @@ async def main():
         if await run_account(acc):
             success_count += 1
         
-        # خواب بین اکانت‌ها
         if idx < len(ALL_ACCOUNTS) - 1:
             sleep_time = random.randint(90, 240)
-            log.info(f"⏳ Sleeping {sleep_time}s...")
+            log.info(f"⏳ Sleeping {sleep_time}s before next account...")
             await asyncio.sleep(sleep_time)
 
     log.info("\n" + "=" * 60)
